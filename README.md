@@ -1,4 +1,4 @@
-# <img src="extension/media/icon128.png" alt="Lloro Icon" width="32" height="32">Lloro
+# <img src="extension/media/icon128.png" alt="Lloro Icon" width="32" height="32"> Lloro
 
 Chrome Extension + Go Backend for chatting with page content using Gemini CLI via the Agent Client Protocol (ACP).
 
