@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "Lloro",
+  "version": "1.0.0",
+  "description": "Chat with page content using Gemini CLI",
+  "permissions": [
+    "sidePanel",
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://localhost:6363/*",
+    "<all_urls>"
+  ],
+  "side_panel": {
+    "default_path": "side_panel.html"
+  },
+  "action": {
+    "default_title": "Open Lloro"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Ctrl+Period",
+        "mac": "MacCtrl+Period"
+      },
+      "description": "Toggle Lloro sidebar"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "media/icon16.png",
+    "48": "media/icon48.png",
+    "128": "media/icon128.png"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["Readability.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
