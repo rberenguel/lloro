@@ -2,6 +2,9 @@
 
 Chrome Extension + Go Backend for chatting with page content using Gemini CLI via the Agent Client Protocol (ACP).
 
+> [!WARNING]
+> Don't blame me if you get prompt injected, use this at your own risk.
+
 ![Lloro Screenshot](extension/media/screenshot.png)
 
 ## Prerequisites
