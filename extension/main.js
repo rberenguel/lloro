@@ -11,58 +11,128 @@ const sendBtn = document.getElementById('sendBtn');
 const contextInfo = document.getElementById('contextInfo');
 const newChatBtn = document.getElementById('newChatBtn');
 const pinBtn = document.getElementById('pinBtn');
+const sessionsToggleBtn = document.getElementById('sessionsToggleBtn');
+const sessionsPanel = document.getElementById('sessionsPanel');
+const deleteModal = document.getElementById('deleteModal');
+const deleteSessionInfo = document.getElementById('deleteSessionInfo');
+const deleteCancelBtn = document.getElementById('deleteCancelBtn');
+const deleteConfirmBtn = document.getElementById('deleteConfirmBtn');
 
 // State
 let isProcessing = false;
-let includePageContent = true;  // Pin toggle state
-let session = {
-  messages: [],      // Array of {type, text}
-  contextUrl: null,  // URL of page whose content was sent
-  contextTitle: null, // Title of the page
-  model: null
-};
+let currentTabUrl = null;  // Current active tab URL
+let currentSessionId = null;  // ID of current active session
+let sessions = {};  // Map of sessionId -> session object
+
+// Get current session
+function getCurrentSession() {
+  if (!currentSessionId || !sessions[currentSessionId]) {
+    // Create new session if none exists
+    const newId = `session-${Date.now()}`;
+    currentSessionId = newId;
+    sessions[newId] = {
+      id: newId,
+      messages: [],
+      pinnedTabs: {},
+      model: modelSelect.value,
+      createdAt: Date.now(),
+      lastActiveAt: Date.now()
+    };
+  }
+  return sessions[currentSessionId];
+}
+
+// Convenience accessor (replaces global session variable)
+Object.defineProperty(window, 'session', {
+  get() { return getCurrentSession(); }
+});
 
 // Storage helpers
-async function saveSession() {
+async function saveSessions() {
   try {
-    await chrome.storage.local.set({ lloro_session: session });
+    // Update last active time for current session
+    if (currentSessionId && sessions[currentSessionId]) {
+      sessions[currentSessionId].lastActiveAt = Date.now();
+    }
+
+    await chrome.storage.local.set({
+      lloro_data: {
+        currentSessionId,
+        sessions
+      }
+    });
   } catch (e) {
-    console.error('Failed to save session:', e);
+    console.error('Failed to save sessions:', e);
   }
 }
 
-async function loadSession() {
+async function loadSessions() {
   try {
-    const data = await chrome.storage.local.get('lloro_session');
-    if (data.lloro_session) {
-      session = data.lloro_session;
+    const data = await chrome.storage.local.get('lloro_data');
+    if (data.lloro_data) {
+      currentSessionId = data.lloro_data.currentSessionId;
+      sessions = data.lloro_data.sessions || {};
       return true;
     }
   } catch (e) {
-    console.error('Failed to load session:', e);
+    console.error('Failed to load sessions:', e);
   }
   return false;
 }
 
-async function loadSettings() {
+// Backward compatibility: migrate old single-session storage
+async function migrateOldStorage() {
   try {
-    const data = await chrome.storage.local.get('lloro_settings');
-    if (data.lloro_settings) {
-      includePageContent = data.lloro_settings.includePageContent ?? true;
+    const data = await chrome.storage.local.get('lloro_session');
+    if (data.lloro_session) {
+      const oldSession = data.lloro_session;
+      const newId = `session-migrated-${Date.now()}`;
+
+      sessions[newId] = {
+        id: newId,
+        messages: oldSession.messages || [],
+        pinnedTabs: {},
+        model: oldSession.model || modelSelect.value,
+        createdAt: Date.now(),
+        lastActiveAt: Date.now()
+      };
+
+      // Migrate old contextUrl to pinnedTabs if it exists
+      if (oldSession.contextUrl) {
+        sessions[newId].pinnedTabs[oldSession.contextUrl] = {
+          title: oldSession.contextTitle || oldSession.contextUrl,
+          content: '',  // Content not stored in old version
+          pinnedAt: Date.now(),
+          sent: true  // Assume it was already sent
+        };
+      }
+
+      currentSessionId = newId;
+      await saveSessionss();
+
+      // Clean up old storage
+      await chrome.storage.local.remove('lloro_session');
+      await chrome.storage.local.remove('lloro_settings');
+
+      console.log('[Lloro] Migrated old session to new format');
+      return true;
     }
   } catch (e) {
-    console.error('Failed to load settings:', e);
+    console.error('Failed to migrate old storage:', e);
   }
+  return false;
 }
 
-async function saveSettings() {
-  try {
-    await chrome.storage.local.set({
-      lloro_settings: { includePageContent }
-    });
-  } catch (e) {
-    console.error('Failed to save settings:', e);
-  }
+// Check if current tab is pinned
+function isCurrentTabPinned() {
+  return currentTabUrl && session.pinnedTabs[currentTabUrl];
+}
+
+// Update current tab URL
+async function updateCurrentTabUrl() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  currentTabUrl = tab?.url || null;
+  updatePinUI();
 }
 
 // JSON-RPC helper
@@ -110,24 +180,62 @@ async function checkHealth() {
 
 // Update pin button UI
 function updatePinUI() {
-  if (includePageContent) {
+  const isPinned = isCurrentTabPinned();
+
+  if (isPinned) {
     pinBtn.classList.add('active');
-    pinBtn.title = 'Page content will be included (click to disable)';
+    pinBtn.classList.add('permanent');
+    pinBtn.title = 'Page pinned (cannot unpin once sent to AI)';
+    pinBtn.disabled = true;  // Can't unpin once pinned
   } else {
     pinBtn.classList.remove('active');
-    pinBtn.title = 'Page content excluded (click to include)';
+    pinBtn.classList.remove('permanent');
+    pinBtn.title = 'Click to pin this page';
+    pinBtn.disabled = false;
   }
   updateContextInfo();
 }
 
 // Update context info display
 function updateContextInfo() {
-  if (!includePageContent) {
-    contextInfo.textContent = 'Page content disabled';
-  } else if (session.contextUrl) {
-    contextInfo.textContent = `Context: ${session.contextTitle || session.contextUrl}`;
+  const pinnedTabs = Object.entries(session.pinnedTabs);
+  const pinnedCount = pinnedTabs.length;
+  const sentCount = pinnedTabs.filter(([_, tab]) => tab.sent).length;
+
+  contextInfo.innerHTML = '';
+
+  if (pinnedCount === 0) {
+    const text = document.createElement('span');
+    text.textContent = 'No pages pinned';
+    contextInfo.appendChild(text);
   } else {
-    contextInfo.textContent = 'Page content will be included';
+    // Create list of pinned pages
+    const list = document.createElement('div');
+    list.className = 'pinned-list';
+
+    pinnedTabs.forEach(([url, tab]) => {
+      const item = document.createElement('div');
+      item.className = 'pinned-item';
+      if (url === currentTabUrl) {
+        item.classList.add('current');
+      }
+
+      const title = document.createElement('span');
+      title.className = 'pinned-title';
+      title.textContent = tab.title || new URL(url).hostname;
+      title.title = url;
+
+      const status = document.createElement('span');
+      status.className = 'pinned-status';
+      status.textContent = tab.sent ? '✓' : '…';
+      status.title = tab.sent ? 'Sent to AI' : 'Will be sent with next message';
+
+      item.appendChild(title);
+      item.appendChild(status);
+      list.appendChild(item);
+    });
+
+    contextInfo.appendChild(list);
   }
 }
 
@@ -176,25 +284,161 @@ function addMessage(type, text) {
   // Don't persist system/error messages
   if (type === 'user' || type === 'assistant') {
     session.messages.push({ type, text });
-    saveSession();
+    saveSessions();
   }
   return addMessageToDOM(type, text);
 }
 
+// Switch to a different session
+async function switchSession(sessionId) {
+  if (!sessions[sessionId]) {
+    console.error('Session not found:', sessionId);
+    return;
+  }
+
+  currentSessionId = sessionId;
+  sessions[sessionId].lastActiveAt = Date.now();
+
+  // Update model selector to match session's model
+  if (sessions[sessionId].model) {
+    modelSelect.value = sessions[sessionId].model;
+  }
+
+  // Render the session's messages
+  renderMessages();
+  updatePinUI();
+  updateContextInfo();
+  updateSessionsList();
+
+  await saveSessions();
+}
+
+// Show delete confirmation modal
+let sessionToDelete = null;
+
+function showDeleteModal(sessionId) {
+  const session = sessions[sessionId];
+  if (!session) return;
+
+  sessionToDelete = sessionId;
+
+  const messageCount = session.messages.length;
+  const pinnedCount = Object.keys(session.pinnedTabs).length;
+  deleteSessionInfo.textContent = `${messageCount} message${messageCount !== 1 ? 's' : ''}, ${pinnedCount} pinned page${pinnedCount !== 1 ? 's' : ''}`;
+
+  deleteModal.style.display = 'flex';
+}
+
+function hideDeleteModal() {
+  deleteModal.style.display = 'none';
+  sessionToDelete = null;
+}
+
+// Delete a session
+async function deleteSession(sessionId) {
+  if (!sessions[sessionId]) {
+    return;
+  }
+
+  delete sessions[sessionId];
+
+  // If we deleted the current session, switch to another or create new
+  if (currentSessionId === sessionId) {
+    const remainingSessions = Object.keys(sessions);
+    if (remainingSessions.length > 0) {
+      // Switch to most recently active session
+      const sorted = remainingSessions.sort((a, b) =>
+        sessions[b].lastActiveAt - sessions[a].lastActiveAt
+      );
+      await switchSession(sorted[0]);
+    } else {
+      // No sessions left, create a new one
+      await newChat();
+    }
+  } else {
+    updateSessionsList();
+  }
+
+  await saveSessions();
+}
+
+// Get sorted session list (most recent first)
+function getSortedSessions() {
+  return Object.values(sessions).sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+}
+
+// Update sessions list UI
+function updateSessionsList() {
+  const sessionsList = document.getElementById('sessionsList');
+  if (!sessionsList) return;
+
+  sessionsList.innerHTML = '';
+  const sorted = getSortedSessions();
+
+  sorted.forEach(sess => {
+    const item = document.createElement('div');
+    item.className = 'session-item' + (sess.id === currentSessionId ? ' active' : '');
+
+    const info = document.createElement('div');
+    info.className = 'session-info';
+
+    const title = document.createElement('div');
+    title.className = 'session-title';
+    const messageCount = sess.messages.length;
+    const pinnedCount = Object.keys(sess.pinnedTabs).length;
+    title.textContent = `${messageCount} msg${messageCount !== 1 ? 's' : ''}${pinnedCount > 0 ? `, ${pinnedCount} pinned` : ''}`;
+
+    const meta = document.createElement('div');
+    meta.className = 'session-meta';
+    const date = new Date(sess.createdAt);
+    meta.textContent = `${sess.model || 'unknown'} • ${date.toLocaleDateString()}`;
+
+    info.appendChild(title);
+    info.appendChild(meta);
+
+    const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'session-delete';
+    deleteBtn.textContent = '×';
+    deleteBtn.title = 'Delete session';
+    deleteBtn.onclick = (e) => {
+      e.stopPropagation();
+      showDeleteModal(sess.id);
+    };
+
+    item.appendChild(info);
+    item.appendChild(deleteBtn);
+
+    item.onclick = () => {
+      if (sess.id !== currentSessionId) {
+        switchSession(sess.id);
+      }
+    };
+
+    sessionsList.appendChild(item);
+  });
+}
+
 // Start a new chat session
 async function newChat() {
-  // Reset session
-  session = {
+  // Create new session
+  const newId = `session-${Date.now()}`;
+  currentSessionId = newId;
+  sessions[newId] = {
+    id: newId,
     messages: [],
-    contextUrl: null,
-    contextTitle: null,
-    model: modelSelect.value
+    pinnedTabs: {},
+    model: modelSelect.value,
+    createdAt: Date.now(),
+    lastActiveAt: Date.now()
   };
-  await saveSession();
+
+  await saveSessions();
 
   // Clear and render empty state
   renderMessages();
+  updatePinUI();
   updateContextInfo();
+  updateSessionsList();
 
   // Initialize new session with current model
   await initSession(modelSelect.value);
@@ -210,7 +454,7 @@ async function initSession(model) {
     statusDot.className = 'status-dot';
     statusText.textContent = result.model;
     session.model = result.model;
-    await saveSession();
+    await saveSessions();
   } catch (error) {
     statusDot.className = 'status-dot disconnected';
     statusText.textContent = 'Init failed';
@@ -219,7 +463,7 @@ async function initSession(model) {
 }
 
 // Extract page content using Readability
-async function extractPageContent() {
+async function extractPageContent(url) {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
@@ -256,11 +500,21 @@ async function extractPageContent() {
     });
 
     if (results?.[0]?.result) {
-      const { title, content, url } = results[0].result;
-      session.contextUrl = url;
-      session.contextTitle = title;
+      const { title, content, url: extractedUrl } = results[0].result;
+
+      // Mark this tab as pinned permanently and store content
+      session.pinnedTabs[extractedUrl] = {
+        title: title,
+        content: content,
+        pinnedAt: Date.now(),
+        sent: false  // Will be sent with next chat message
+      };
+
+      updatePinUI();
       updateContextInfo();
-      return `Title: ${title}\n\n${content}`;
+      await saveSessions();
+
+      return content;
     }
 
     return null;
@@ -320,21 +574,19 @@ async function sendMessage() {
   try {
     let context = '';
 
-    // Only extract/send context if pin is active and we haven't sent for this URL yet
-    if (includePageContent) {
-      const currentUrl = await getCurrentTabUrl();
-
-      if (currentUrl !== session.contextUrl) {
-        setStatus('working', 'Extracting page...');
-        console.log('[Lloro] Extracting page content...');
-        context = await extractPageContent() || '';
-        console.log('[Lloro] Context length:', context.length);
-        await saveSession(); // Save context URL
-      } else {
-        console.log('[Lloro] Skipping extraction (same page)');
+    // Collect context from all pinned tabs that haven't been sent yet
+    const unsent = [];
+    for (const [url, tabInfo] of Object.entries(session.pinnedTabs)) {
+      if (!tabInfo.sent && tabInfo.content) {
+        unsent.push(`## ${tabInfo.title}\nURL: ${url}\n\n${tabInfo.content}`);
+        tabInfo.sent = true;  // Mark as sent
       }
-    } else {
-      console.log('[Lloro] Page content disabled');
+    }
+
+    if (unsent.length > 0) {
+      context = unsent.join('\n\n---\n\n');
+      console.log('[Lloro] Sending context for', unsent.length, 'pinned pages');
+      await saveSessions();  // Save sent status
     }
 
     setStatus('working', 'Waiting for Gemini...');
@@ -372,37 +624,102 @@ messageInput.addEventListener('keydown', (e) => {
 sendBtn.addEventListener('click', sendMessage);
 newChatBtn.addEventListener('click', newChat);
 
+sessionsToggleBtn.addEventListener('click', () => {
+  const isVisible = sessionsPanel.style.display !== 'none';
+  sessionsPanel.style.display = isVisible ? 'none' : 'block';
+  sessionsToggleBtn.classList.toggle('active', !isVisible);
+  if (!isVisible) {
+    updateSessionsList();
+  }
+});
+
 modelSelect.addEventListener('change', () => {
   newChat();
 });
 
-pinBtn.addEventListener('click', () => {
-  includePageContent = !includePageContent;
-  updatePinUI();
-  saveSettings();
+// Modal event listeners
+deleteCancelBtn.addEventListener('click', () => {
+  hideDeleteModal();
+});
+
+deleteConfirmBtn.addEventListener('click', async () => {
+  if (sessionToDelete) {
+    await deleteSession(sessionToDelete);
+    hideDeleteModal();
+  }
+});
+
+// Close modal on overlay click
+deleteModal.addEventListener('click', (e) => {
+  if (e.target === deleteModal) {
+    hideDeleteModal();
+  }
+});
+
+// Close modal on Escape key
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && deleteModal.style.display === 'flex') {
+    hideDeleteModal();
+  }
+});
+
+pinBtn.addEventListener('click', async () => {
+  // Can't unpin if already pinned (button should be disabled anyway)
+  if (isCurrentTabPinned()) {
+    return;
+  }
+
+  // Pin the current tab by extracting its content
+  setStatus('working', 'Extracting page...');
+  const context = await extractPageContent();
+
+  if (context) {
+    console.log('[Lloro] Page pinned, context extracted');
+    // Context will be sent with next chat message
+  } else {
+    console.log('[Lloro] Failed to extract page content');
+    addMessageToDOM('error', 'Failed to extract page content');
+  }
+
+  setStatus('', '');
+  checkHealth();
 });
 
 // Initialize on load
 document.addEventListener('DOMContentLoaded', async () => {
-  // Load settings
-  await loadSettings();
-  updatePinUI();
+  // Update current tab URL
+  await updateCurrentTabUrl();
 
-  // Load previous session
-  const hasSession = await loadSession();
-  if (hasSession && session.messages.length > 0) {
+  // Try to migrate old storage format first
+  await migrateOldStorage();
+
+  // Load sessions
+  const hasSessions = await loadSessions();
+  if (hasSessions && getCurrentSession().messages.length > 0) {
     renderMessages();
-    if (session.model) {
-      modelSelect.value = session.model;
+    if (getCurrentSession().model) {
+      modelSelect.value = getCurrentSession().model;
     }
   }
   updateContextInfo();
+  updateSessionsList();
 
   // Check backend
   const healthy = await checkHealth();
   if (healthy) {
     setInterval(checkHealth, 30000);
   }
+
+  // Listen for tab changes
+  chrome.tabs.onActivated.addListener(async () => {
+    await updateCurrentTabUrl();
+  });
+
+  chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
+    if (changeInfo.url) {
+      await updateCurrentTabUrl();
+    }
+  });
 
   // Focus input field (with delay to ensure panel is ready)
   setTimeout(() => messageInput.focus(), 100);
