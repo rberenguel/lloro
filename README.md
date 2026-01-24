@@ -7,6 +7,14 @@ Chrome Extension + Go Backend for chatting with page content using Gemini CLI vi
 
 ![Lloro Screenshot](extension/media/screenshot.png)
 
+## Why not…
+
+### Why didn't you use the Gemini API like a normal person?
+
+I didn't want to deal with the API, to be fair. I already have gemini-cli installed, with an acceptable
+free tier + the access I get for Gemini Pro, so… This gets it done without dealing with the API. Which I
+did not want to deal with. Feel free to fork and add that if you feel like it, no problem!
+
 ## What's New in v0.1.0
 
 - **🎯 Smart Pinning**: Pages are no longer sent by default - click the pin button to opt-in
