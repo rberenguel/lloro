@@ -53,14 +53,14 @@
 
 ### Component Overview
 
-| Component | File | Lines of Code | Purpose |
-|-----------|------|---------------|---------|
-| Service Worker | `background.js` | 7 | Opens side panel on click |
-| Content Script | `content.js` | 102 | Extracts page content |
-| UI Logic | `main.js` | 419 | Core application logic |
-| UI Markup | `side_panel.html` | 490 | Side panel interface |
-| Readability | `Readability.js` | 2,786 | Article extraction library |
-| Markdown | `marked.min.js` | - | Markdown rendering |
+| Component      | File              | Lines of Code | Purpose                    |
+| -------------- | ----------------- | ------------- | -------------------------- |
+| Service Worker | `background.js`   | 7             | Opens side panel on click  |
+| Content Script | `content.js`      | 102           | Extracts page content      |
+| UI Logic       | `main.js`         | 419           | Core application logic     |
+| UI Markup      | `side_panel.html` | 490           | Side panel interface       |
+| Readability    | `Readability.js`  | 2,786         | Article extraction library |
+| Markdown       | `marked.min.js`   | -             | Markdown rendering         |
 
 ---
 
@@ -90,11 +90,13 @@
 ### 1. Manifest Configuration (`manifest.json`)
 
 **Key Settings:**
+
 - **Name:** Lloro
 - **Version:** 0.0.1
 - **Manifest Version:** 3
 
 **Permissions:**
+
 ```json
 {
   "permissions": ["sidePanel", "activeTab", "scripting", "storage"],
@@ -103,6 +105,7 @@
 ```
 
 **Permission Breakdown:**
+
 - `sidePanel` - Enables side panel UI (Chrome 114+)
 - `activeTab` - Access to current active tab
 - `scripting` - Execute scripts in pages
@@ -111,11 +114,13 @@
 - `<all_urls>` - Access all websites for content extraction
 
 **UI Configuration:**
+
 - Side panel: `side_panel.html`
 - Keyboard shortcut: `Ctrl+Period` (Windows) or `MacCtrl+Period` (Mac)
 - Icons: 16x16, 48x48, 128x128 PNG
 
 **Web-Accessible Resources:**
+
 - `Readability.js` exposed to content scripts
 
 ---
@@ -123,6 +128,7 @@
 ### 2. Background Service Worker (`background.js`)
 
 **Responsibilities:**
+
 - Listens for extension icon clicks
 - Opens side panel when clicked
 - Minimal implementation (7 lines)
@@ -142,6 +148,7 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 **Purpose:** Extract readable content from webpages
 
 **Key Features:**
+
 1. **Injection Guard:** Prevents duplicate loading
 2. **Message Listener:** Waits for extraction requests
 3. **Dual Extraction Strategy:**
@@ -149,9 +156,10 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
    - Fallback: Manual DOM extraction
 
 **Extraction Flow:**
+
 ```javascript
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'extractContent') {
+  if (request.action === "extractContent") {
     try {
       const content = extractContent();
       sendResponse({ success: true, content });
@@ -164,16 +172,19 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 ```
 
 **Readability.js Integration:**
+
 - Clones document to avoid DOM mutation
 - Extracts: title, content, excerpt, byline, siteName
 
 **Fallback Extraction:**
+
 1. Tries standard selectors: `article`, `[role="main"]`, `main`, `.post-content`
 2. Falls back to `document.body`
 3. Removes scripts, styles, navigation, ads, comments
 4. Cleans whitespace and formats text
 
 **Output Format:**
+
 ```javascript
 {
   title: string,
@@ -191,52 +202,57 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 **The core application logic (419 lines)**
 
 **State Management:**
+
 ```javascript
 let session = {
-  messages: [],          // Array of {type, text}
-  contextUrl: null,      // URL of context
-  contextTitle: null,    // Page title
-  model: null            // Selected AI model
+  messages: [], // Array of {type, text}
+  contextUrl: null, // URL of context
+  contextTitle: null, // Page title
+  model: null, // Selected AI model
 };
 
-let includePageContent = true;  // Pin toggle state
-let isProcessing = false;       // Processing lock
+let includePageContent = true; // Pin toggle state
+let isProcessing = false; // Processing lock
 ```
 
 **Key Features:**
 
 #### Session Persistence
+
 - Uses `chrome.storage.local` to persist conversation history
 - Saves messages, URLs, and settings between sessions
 - Allows users to resume conversations
 
 #### Health Checking
+
 ```javascript
 async function checkHealth() {
   const response = await fetch(`${BACKEND_URL}/health`);
   const data = await response.json();
 
-  statusDot.className = 'status-dot';
-  statusText.textContent = data.model || 'Ready';
+  statusDot.className = "status-dot";
+  statusText.textContent = data.model || "Ready";
   return true;
 }
 ```
+
 - Runs every 30 seconds
 - Monitors backend availability
 - Updates status indicator
 
 #### JSON-RPC Communication
+
 ```javascript
 async function rpcCall(method, params) {
   const response = await fetch(`${RPC_ENDPOINT}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      jsonrpc: '2.0',
+      jsonrpc: "2.0",
       id: Date.now(),
       method,
-      params
-    })
+      params,
+    }),
   });
 
   const data = await response.json();
@@ -246,31 +262,36 @@ async function rpcCall(method, params) {
 ```
 
 **RPC Methods:**
+
 1. **InitSession** - Initialize conversation with selected model
 2. **Chat** - Send message with optional page context
 
 #### Smart Context Management
+
 - Only extracts page content on first message to a URL
 - Skips re-extraction when navigating back to same URL
 - Can be disabled via pin button
 - Tracks `session.contextUrl` to prevent redundant extractions
 
 #### Message Rendering
+
 Uses **marked.js (v15.0.12)** for Markdown rendering:
+
 ```javascript
 marked.setOptions({
-  breaks: true,     // \n → <br>
-  gfm: true         // GitHub Flavored Markdown
+  breaks: true, // \n → <br>
+  gfm: true, // GitHub Flavored Markdown
 });
 
-if (type === 'assistant') {
-  msg.innerHTML = marked.parse(text);  // Renders HTML
-} else if (type === 'user') {
-  msg.textContent = text;               // Plain text
+if (type === "assistant") {
+  msg.innerHTML = marked.parse(text); // Renders HTML
+} else if (type === "user") {
+  msg.textContent = text; // Plain text
 }
 ```
 
 **Markdown Support:**
+
 - Code blocks with syntax highlighting
 - Bold, italic, strikethrough
 - Lists, blockquotes, tables
@@ -278,6 +299,7 @@ if (type === 'assistant') {
 - Headers (styled with colors)
 
 #### UI State Management
+
 - Auto-scrolling chat to bottom
 - Textarea height expansion (min 44px, max 200px)
 - Send button disabled during processing
@@ -285,6 +307,7 @@ if (type === 'assistant') {
 - Loading animation (3 bouncing dots)
 
 **Keyboard Shortcuts:**
+
 - `Enter` to send message
 - `Shift+Enter` for newline
 - Auto-focus when panel becomes visible
@@ -294,6 +317,7 @@ if (type === 'assistant') {
 ### 5. Side Panel UI (`side_panel.html`)
 
 **Layout Structure:**
+
 ```
 ┌─────────────────────────────────────────┐
 │  Header: "LLORO" | [+] | Model Select  │  (28px)
@@ -315,6 +339,7 @@ if (type === 'assistant') {
 ```
 
 **Design System (Solarized Dark Theme):**
+
 - Base: Pure black (#000000)
 - Text: Light gray (#839496)
 - Accent: Cyan (#2aa198)
@@ -325,15 +350,18 @@ if (type === 'assistant') {
 **UI Components:**
 
 1. **Header Controls:**
+
    - "+" button: New conversation
    - Model dropdown: 5 AI models (defaults to `gemini-3-flash-preview`)
 
 2. **Status Bar:**
+
    - Dot indicator: Green (ready), Red (offline), Yellow/Cyan (working)
    - Text: Model name or status message
    - Pulse animation during processing
 
 3. **Chat Container:**
+
    - Scrollable with custom scrollbar
    - Message styles:
      - User: Right-aligned, blue border
@@ -342,6 +370,7 @@ if (type === 'assistant') {
      - Error: Red border and text
 
 4. **Context Bar:**
+
    - Pin button (toggles page content)
    - Context info text
    - Visual feedback when active
@@ -358,6 +387,7 @@ if (type === 'assistant') {
 ### JSON-RPC 2.0 Standard
 
 **Request Format:**
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -371,6 +401,7 @@ if (type === 'assistant') {
 ```
 
 **Response Format (Success):**
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -382,6 +413,7 @@ if (type === 'assistant') {
 ```
 
 **Response Format (Error):**
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -395,13 +427,14 @@ if (type === 'assistant') {
 
 ### API Methods
 
-| Method | Parameters | Response | Purpose |
-|--------|-----------|----------|---------|
-| `InitSession` | `{ model: string }` | `{ model: string }` | Initialize conversation |
-| `Chat` | `{ message: string, context?: string }` | `{ response: string }` | Send message to AI |
-| `GET /health` | N/A | `{ model: string }` | Check backend status |
+| Method        | Parameters                              | Response               | Purpose                 |
+| ------------- | --------------------------------------- | ---------------------- | ----------------------- |
+| `InitSession` | `{ model: string }`                     | `{ model: string }`    | Initialize conversation |
+| `Chat`        | `{ message: string, context?: string }` | `{ response: string }` | Send message to AI      |
+| `GET /health` | N/A                                     | `{ model: string }`    | Check backend status    |
 
 **Backend Endpoints:**
+
 - JSON-RPC: `http://localhost:6363/rpc`
 - Health Check: `http://localhost:6363/health`
 
@@ -412,11 +445,13 @@ if (type === 'assistant') {
 ### Complete Message Journey
 
 **Step 1: User Input**
+
 ```
 User types message in textarea → Press Enter
 ```
 
 **Step 2: Extraction Check**
+
 ```
 if (includePageContent && currentUrl !== session.contextUrl) {
   → Extract page content via content script
@@ -425,6 +460,7 @@ if (includePageContent && currentUrl !== session.contextUrl) {
 ```
 
 **Step 3: RPC Call**
+
 ```
 POST http://localhost:6363/rpc
 {
@@ -439,6 +475,7 @@ POST http://localhost:6363/rpc
 ```
 
 **Step 4: Backend Processing**
+
 ```
 Go server → Pass to Gemini CLI subprocess
 → Maintain ACP session with Gemini
@@ -446,6 +483,7 @@ Go server → Pass to Gemini CLI subprocess
 ```
 
 **Step 5: UI Update**
+
 ```
 Receive response → Parse Markdown
 → Render with marked.js
@@ -455,6 +493,7 @@ Receive response → Parse Markdown
 ```
 
 **Step 6: Persistence**
+
 ```
 Message saved to chrome.storage.local
 → Retrievable on next session
@@ -466,36 +505,42 @@ Message saved to chrome.storage.local
 ## Key Features
 
 ### 1. Multi-Turn Conversations
+
 - Maintains persistent session history
 - User/AI messages stored in IndexedDB
 - Resume conversations across browser sessions
 - Model selection triggers new session
 
 ### 2. Context-Aware Chat
+
 - Extracts page content using Readability.js
 - Automatically sends context with first message to new URL
 - Pin button to toggle page content inclusion
 - Shows which page the context comes from
 
 ### 3. Content Extraction
+
 - Readability.js for intelligent article parsing
 - Fallback manual extraction via DOM selectors
 - Handles blogs, news sites, documentation
 - Removes navigation, ads, comments
 
 ### 4. Status Monitoring
+
 - Real-time backend health checks
 - Shows model availability
 - Connection status indicator
 - Auto-reconnect attempts
 
 ### 5. Session Management
+
 - Local storage persistence
 - URL-based context tracking
 - New chat button for fresh conversations
 - Model switching triggers reset
 
 ### 6. Rich UI Experience
+
 - Markdown rendering with syntax highlighting
 - Auto-expanding input textarea
 - Loading animations
@@ -509,6 +554,7 @@ Message saved to chrome.storage.local
 ### Internal Libraries
 
 1. **marked.min.js (v15.0.12, 39.9 KB)**
+
    - Markdown parser and renderer
    - GitHub Flavored Markdown support
    - Converts assistant responses to formatted HTML
@@ -519,11 +565,13 @@ Message saved to chrome.storage.local
    - Filters ads, navigation, comments
 
 ### External Dependencies
+
 - Chrome APIs (native)
 - Fetch API (native)
 - ES6+ JavaScript
 
 **No Runtime Dependencies:**
+
 - No npm packages
 - No external CDNs
 - All libraries included locally
@@ -533,11 +581,13 @@ Message saved to chrome.storage.local
 ## User Workflow
 
 ### Setup
+
 1. Start Go backend: `go run main.go`
 2. Load extension in Chrome: `chrome://extensions`
 3. Click extension icon or press `Ctrl+Period`
 
 ### First Message
+
 1. Navigate to any webpage
 2. Open Lloro side panel
 3. Select model (optional, defaults to Gemini 3 Flash)
@@ -545,6 +595,7 @@ Message saved to chrome.storage.local
 5. Press Enter
 
 ### Backend Action
+
 1. Extension extracts page content
 2. Sends message + context via JSON-RPC
 3. Backend spawns `gemini --experimental-acp` subprocess
@@ -552,18 +603,21 @@ Message saved to chrome.storage.local
 5. Returns AI response
 
 ### Response Handling
+
 1. Extension receives markdown response
 2. Renders with marked.js
 3. Displays in chat container
 4. Saves to storage
 
 ### Follow-up Messages
+
 - No re-extraction for same URL
 - Just send message to backend
 - Backend uses existing ACP session
 - Conversation history maintained
 
 ### New Conversation
+
 - Click "+" button to reset
 - Switch model → triggers new InitSession
 - Navigate new URL → triggers new extraction
@@ -586,18 +640,21 @@ Message saved to chrome.storage.local
 ## Areas for Improvement
 
 ### Security
+
 - **Prompt Injection Risk:** Content sent directly to AI without sanitization
 - **Privacy Concerns:** All page content sent to backend
 - **Local Storage Growth:** Conversation history not pruned
 - **HTTP Only:** Backend assumes localhost (could use HTTPS)
 
 ### User Experience
+
 - **Error Recovery:** Failed extractions silently continue
 - **No Rate Limiting:** Could spam backend
 - **Backend Dependency:** Requires separate Go server
 - **Limited Offline Mode:** No fallback when backend unavailable
 
 ### Functionality
+
 - **No Message Editing:** Can't edit sent messages
 - **No Export:** Can't export conversations
 - **Limited Model Info:** Doesn't show token usage or costs
@@ -605,6 +662,7 @@ Message saved to chrome.storage.local
 - **Single Session:** Can't manage multiple conversations
 
 ### Technical
+
 - **No TypeScript:** Plain JavaScript (harder to maintain)
 - **No Tests:** No unit or integration tests
 - **No Build Process:** Manual file management
@@ -615,16 +673,16 @@ Message saved to chrome.storage.local
 
 ## Code Quality Metrics
 
-| Aspect | Status | Notes |
-|--------|--------|-------|
-| Code Organization | Good | Clear separation of concerns |
-| Error Handling | Moderate | Basic try-catch, could be improved |
-| Documentation | Minimal | Few inline comments |
-| Testing | None | No test suite |
-| Type Safety | None | Plain JavaScript |
-| Performance | Good | Efficient rendering, minimal re-renders |
-| Security | Moderate | Potential prompt injection risk |
-| Accessibility | Basic | Color indicators only |
+| Aspect            | Status   | Notes                                   |
+| ----------------- | -------- | --------------------------------------- |
+| Code Organization | Good     | Clear separation of concerns            |
+| Error Handling    | Moderate | Basic try-catch, could be improved      |
+| Documentation     | Minimal  | Few inline comments                     |
+| Testing           | None     | No test suite                           |
+| Type Safety       | None     | Plain JavaScript                        |
+| Performance       | Good     | Efficient rendering, minimal re-renders |
+| Security          | Moderate | Potential prompt injection risk         |
+| Accessibility     | Basic    | Color indicators only                   |
 
 ---
 
@@ -632,15 +690,15 @@ Message saved to chrome.storage.local
 
 ### Code Statistics
 
-| File | Size | Language | Purpose |
-|------|------|----------|---------|
-| `manifest.json` | 895 B | JSON | Extension config |
-| `background.js` | 251 B | JavaScript | Service worker |
-| `content.js` | 2,655 B | JavaScript | Content extraction |
-| `main.js` | 11,060 B | JavaScript | UI logic |
-| `side_panel.html` | 10,823 B | HTML/CSS | UI markup |
-| `marked.min.js` | 39,903 B | JavaScript | Markdown library |
-| `Readability.js` | 89,980 B | JavaScript | Article extraction |
+| File              | Size     | Language   | Purpose            |
+| ----------------- | -------- | ---------- | ------------------ |
+| `manifest.json`   | 895 B    | JSON       | Extension config   |
+| `background.js`   | 251 B    | JavaScript | Service worker     |
+| `content.js`      | 2,655 B  | JavaScript | Content extraction |
+| `main.js`         | 11,060 B | JavaScript | UI logic           |
+| `side_panel.html` | 10,823 B | HTML/CSS   | UI markup          |
+| `marked.min.js`   | 39,903 B | JavaScript | Markdown library   |
+| `Readability.js`  | 89,980 B | JavaScript | Article extraction |
 
 **Total Extension Size:** ~155 KB unpacked
 
@@ -668,5 +726,5 @@ Message saved to chrome.storage.local
 
 ---
 
-*Documentation generated: 2026-01-24*
-*Extension Version: 0.0.1*
+_Documentation generated: 2026-01-24_
+_Extension Version: 0.0.1_

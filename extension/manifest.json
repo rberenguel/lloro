@@ -1,18 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Lloro",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Chat with page content using Gemini CLI",
-  "permissions": [
-    "sidePanel",
-    "activeTab",
-    "scripting",
-    "storage"
-  ],
-  "host_permissions": [
-    "http://localhost:6363/*",
-    "<all_urls>"
-  ],
+  "permissions": ["sidePanel", "activeTab", "scripting", "storage"],
+  "host_permissions": ["http://localhost:6363/*", "<all_urls>"],
   "side_panel": {
     "default_path": "side_panel.html"
   },

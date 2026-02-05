@@ -1,28 +1,33 @@
-const BACKEND_URL = 'http://localhost:6363';
+const BACKEND_URL = "http://localhost:6363";
 const RPC_ENDPOINT = `${BACKEND_URL}/rpc`;
 
 // DOM Elements
-const modelSelect = document.getElementById('modelSelect');
-const statusDot = document.getElementById('statusDot');
-const statusText = document.getElementById('statusText');
-const chatContainer = document.getElementById('chatContainer');
-const messageInput = document.getElementById('messageInput');
-const sendBtn = document.getElementById('sendBtn');
-const contextInfo = document.getElementById('contextInfo');
-const newChatBtn = document.getElementById('newChatBtn');
-const pinBtn = document.getElementById('pinBtn');
-const sessionsToggleBtn = document.getElementById('sessionsToggleBtn');
-const sessionsPanel = document.getElementById('sessionsPanel');
-const deleteModal = document.getElementById('deleteModal');
-const deleteSessionInfo = document.getElementById('deleteSessionInfo');
-const deleteCancelBtn = document.getElementById('deleteCancelBtn');
-const deleteConfirmBtn = document.getElementById('deleteConfirmBtn');
+const modelSelect = document.getElementById("modelSelect");
+const statusDot = document.getElementById("statusDot");
+const statusText = document.getElementById("statusText");
+const chatContainer = document.getElementById("chatContainer");
+const messageInput = document.getElementById("messageInput");
+const sendBtn = document.getElementById("sendBtn");
+const contextInfo = document.getElementById("contextInfo");
+const newChatBtn = document.getElementById("newChatBtn");
+const pinBtn = document.getElementById("pinBtn");
+const sessionsToggleBtn = document.getElementById("sessionsToggleBtn");
+const sessionsPanel = document.getElementById("sessionsPanel");
+const deleteModal = document.getElementById("deleteModal");
+const deleteSessionInfo = document.getElementById("deleteSessionInfo");
+const deleteCancelBtn = document.getElementById("deleteCancelBtn");
+const deleteConfirmBtn = document.getElementById("deleteConfirmBtn");
 
 // State
 let isProcessing = false;
-let currentTabUrl = null;  // Current active tab URL
-let currentSessionId = null;  // ID of current active session
-let sessions = {};  // Map of sessionId -> session object
+let currentTabUrl = null; // Current active tab URL
+let currentSessionId = null; // ID of current active session
+let sessions = {}; // Map of sessionId -> session object
+
+// On-device Gemini Nano (Chrome Prompt API)
+const ON_DEVICE_MODEL = "on-device-nano";
+let localSession = null;
+let onDeviceAvailable = false;
 
 // Get current session
 function getCurrentSession() {
@@ -36,15 +41,17 @@ function getCurrentSession() {
       pinnedTabs: {},
       model: modelSelect.value,
       createdAt: Date.now(),
-      lastActiveAt: Date.now()
+      lastActiveAt: Date.now(),
     };
   }
   return sessions[currentSessionId];
 }
 
 // Convenience accessor (replaces global session variable)
-Object.defineProperty(window, 'session', {
-  get() { return getCurrentSession(); }
+Object.defineProperty(window, "session", {
+  get() {
+    return getCurrentSession();
+  },
 });
 
 // Storage helpers
@@ -58,24 +65,24 @@ async function saveSessions() {
     await chrome.storage.local.set({
       lloro_data: {
         currentSessionId,
-        sessions
-      }
+        sessions,
+      },
     });
   } catch (e) {
-    console.error('Failed to save sessions:', e);
+    console.error("Failed to save sessions:", e);
   }
 }
 
 async function loadSessions() {
   try {
-    const data = await chrome.storage.local.get('lloro_data');
+    const data = await chrome.storage.local.get("lloro_data");
     if (data.lloro_data) {
       currentSessionId = data.lloro_data.currentSessionId;
       sessions = data.lloro_data.sessions || {};
       return true;
     }
   } catch (e) {
-    console.error('Failed to load sessions:', e);
+    console.error("Failed to load sessions:", e);
   }
   return false;
 }
@@ -83,7 +90,7 @@ async function loadSessions() {
 // Backward compatibility: migrate old single-session storage
 async function migrateOldStorage() {
   try {
-    const data = await chrome.storage.local.get('lloro_session');
+    const data = await chrome.storage.local.get("lloro_session");
     if (data.lloro_session) {
       const oldSession = data.lloro_session;
       const newId = `session-migrated-${Date.now()}`;
@@ -94,16 +101,16 @@ async function migrateOldStorage() {
         pinnedTabs: {},
         model: oldSession.model || modelSelect.value,
         createdAt: Date.now(),
-        lastActiveAt: Date.now()
+        lastActiveAt: Date.now(),
       };
 
       // Migrate old contextUrl to pinnedTabs if it exists
       if (oldSession.contextUrl) {
         sessions[newId].pinnedTabs[oldSession.contextUrl] = {
           title: oldSession.contextTitle || oldSession.contextUrl,
-          content: '',  // Content not stored in old version
+          content: "", // Content not stored in old version
           pinnedAt: Date.now(),
-          sent: true  // Assume it was already sent
+          sent: true, // Assume it was already sent
         };
       }
 
@@ -111,14 +118,14 @@ async function migrateOldStorage() {
       await saveSessionss();
 
       // Clean up old storage
-      await chrome.storage.local.remove('lloro_session');
-      await chrome.storage.local.remove('lloro_settings');
+      await chrome.storage.local.remove("lloro_session");
+      await chrome.storage.local.remove("lloro_settings");
 
-      console.log('[Lloro] Migrated old session to new format');
+      console.log("[Lloro] Migrated old session to new format");
       return true;
     }
   } catch (e) {
-    console.error('Failed to migrate old storage:', e);
+    console.error("Failed to migrate old storage:", e);
   }
   return false;
 }
@@ -138,14 +145,14 @@ async function updateCurrentTabUrl() {
 // JSON-RPC helper
 async function rpcCall(method, params) {
   const response = await fetch(RPC_ENDPOINT, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      jsonrpc: '2.0',
+      jsonrpc: "2.0",
       id: Date.now(),
       method,
-      params
-    })
+      params,
+    }),
   });
 
   const data = await response.json();
@@ -163,17 +170,16 @@ async function checkHealth() {
     const response = await fetch(`${BACKEND_URL}/health`);
     const data = await response.json();
 
-    statusDot.className = 'status-dot';
-    if (data.model) {
-      statusText.textContent = data.model;
-    } else {
-      statusText.textContent = 'Ready';
+    if (!isOnDevice()) {
+      statusDot.className = "status-dot";
+      statusText.textContent = data.model || "Ready";
     }
-
     return true;
   } catch (error) {
-    statusDot.className = 'status-dot disconnected';
-    statusText.textContent = 'Backend offline';
+    if (!isOnDevice()) {
+      statusDot.className = "status-dot disconnected";
+      statusText.textContent = "Backend offline";
+    }
     return false;
   }
 }
@@ -183,14 +189,14 @@ function updatePinUI() {
   const isPinned = isCurrentTabPinned();
 
   if (isPinned) {
-    pinBtn.classList.add('active');
-    pinBtn.classList.add('permanent');
-    pinBtn.title = 'Page pinned (cannot unpin once sent to AI)';
-    pinBtn.disabled = true;  // Can't unpin once pinned
+    pinBtn.classList.add("active");
+    pinBtn.classList.add("permanent");
+    pinBtn.title = "Page pinned (cannot unpin once sent to AI)";
+    pinBtn.disabled = true; // Can't unpin once pinned
   } else {
-    pinBtn.classList.remove('active');
-    pinBtn.classList.remove('permanent');
-    pinBtn.title = 'Click to pin this page';
+    pinBtn.classList.remove("active");
+    pinBtn.classList.remove("permanent");
+    pinBtn.title = "Click to pin this page";
     pinBtn.disabled = false;
   }
   updateContextInfo();
@@ -202,33 +208,33 @@ function updateContextInfo() {
   const pinnedCount = pinnedTabs.length;
   const sentCount = pinnedTabs.filter(([_, tab]) => tab.sent).length;
 
-  contextInfo.innerHTML = '';
+  contextInfo.innerHTML = "";
 
   if (pinnedCount === 0) {
-    const text = document.createElement('span');
-    text.textContent = 'No pages pinned';
+    const text = document.createElement("span");
+    text.textContent = "No pages pinned";
     contextInfo.appendChild(text);
   } else {
     // Create list of pinned pages
-    const list = document.createElement('div');
-    list.className = 'pinned-list';
+    const list = document.createElement("div");
+    list.className = "pinned-list";
 
     pinnedTabs.forEach(([url, tab]) => {
-      const item = document.createElement('div');
-      item.className = 'pinned-item';
+      const item = document.createElement("div");
+      item.className = "pinned-item";
       if (url === currentTabUrl) {
-        item.classList.add('current');
+        item.classList.add("current");
       }
 
-      const title = document.createElement('span');
-      title.className = 'pinned-title';
+      const title = document.createElement("span");
+      title.className = "pinned-title";
       title.textContent = tab.title || new URL(url).hostname;
       title.title = url;
 
-      const status = document.createElement('span');
-      status.className = 'pinned-status';
-      status.textContent = tab.sent ? '✓' : '…';
-      status.title = tab.sent ? 'Sent to AI' : 'Will be sent with next message';
+      const status = document.createElement("span");
+      status.className = "pinned-status";
+      status.textContent = tab.sent ? "✓" : "…";
+      status.title = tab.sent ? "Sent to AI" : "Will be sent with next message";
 
       item.appendChild(title);
       item.appendChild(status);
@@ -242,15 +248,16 @@ function updateContextInfo() {
 // Render messages from session
 function renderMessages() {
   // Clear container but keep system message placeholder
-  chatContainer.innerHTML = '';
+  chatContainer.innerHTML = "";
 
   if (session.messages.length === 0) {
-    const sysMsg = document.createElement('div');
-    sysMsg.className = 'message system';
-    sysMsg.textContent = 'Send a message to chat about the current page content.';
+    const sysMsg = document.createElement("div");
+    sysMsg.className = "message system";
+    sysMsg.textContent =
+      "Send a message to chat about the current page content.";
     chatContainer.appendChild(sysMsg);
   } else {
-    session.messages.forEach(msg => {
+    session.messages.forEach((msg) => {
       addMessageToDOM(msg.type, msg.text);
     });
   }
@@ -260,18 +267,18 @@ function renderMessages() {
 
 // Add message to DOM only (no save)
 function addMessageToDOM(type, text) {
-  const msg = document.createElement('div');
+  const msg = document.createElement("div");
   msg.className = `message ${type}`;
 
-  if (type === 'assistant') {
+  if (type === "assistant") {
     msg.innerHTML = marked.parse(text);
-  } else if (type === 'user') {
+  } else if (type === "user") {
     msg.textContent = text;
   } else {
     msg.innerHTML = text
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/\n/g, '<br>');
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\n/g, "<br>");
   }
 
   chatContainer.appendChild(msg);
@@ -282,7 +289,7 @@ function addMessageToDOM(type, text) {
 // Add message and save to session
 function addMessage(type, text) {
   // Don't persist system/error messages
-  if (type === 'user' || type === 'assistant') {
+  if (type === "user" || type === "assistant") {
     session.messages.push({ type, text });
     saveSessions();
   }
@@ -292,7 +299,7 @@ function addMessage(type, text) {
 // Switch to a different session
 async function switchSession(sessionId) {
   if (!sessions[sessionId]) {
-    console.error('Session not found:', sessionId);
+    console.error("Session not found:", sessionId);
     return;
   }
 
@@ -324,13 +331,13 @@ function showDeleteModal(sessionId) {
 
   const messageCount = session.messages.length;
   const pinnedCount = Object.keys(session.pinnedTabs).length;
-  deleteSessionInfo.textContent = `${messageCount} message${messageCount !== 1 ? 's' : ''}, ${pinnedCount} pinned page${pinnedCount !== 1 ? 's' : ''}`;
+  deleteSessionInfo.textContent = `${messageCount} message${messageCount !== 1 ? "s" : ""}, ${pinnedCount} pinned page${pinnedCount !== 1 ? "s" : ""}`;
 
-  deleteModal.style.display = 'flex';
+  deleteModal.style.display = "flex";
 }
 
 function hideDeleteModal() {
-  deleteModal.style.display = 'none';
+  deleteModal.style.display = "none";
   sessionToDelete = null;
 }
 
@@ -347,8 +354,8 @@ async function deleteSession(sessionId) {
     const remainingSessions = Object.keys(sessions);
     if (remainingSessions.length > 0) {
       // Switch to most recently active session
-      const sorted = remainingSessions.sort((a, b) =>
-        sessions[b].lastActiveAt - sessions[a].lastActiveAt
+      const sorted = remainingSessions.sort(
+        (a, b) => sessions[b].lastActiveAt - sessions[a].lastActiveAt,
       );
       await switchSession(sorted[0]);
     } else {
@@ -364,42 +371,45 @@ async function deleteSession(sessionId) {
 
 // Get sorted session list (most recent first)
 function getSortedSessions() {
-  return Object.values(sessions).sort((a, b) => b.lastActiveAt - a.lastActiveAt);
+  return Object.values(sessions).sort(
+    (a, b) => b.lastActiveAt - a.lastActiveAt,
+  );
 }
 
 // Update sessions list UI
 function updateSessionsList() {
-  const sessionsList = document.getElementById('sessionsList');
+  const sessionsList = document.getElementById("sessionsList");
   if (!sessionsList) return;
 
-  sessionsList.innerHTML = '';
+  sessionsList.innerHTML = "";
   const sorted = getSortedSessions();
 
-  sorted.forEach(sess => {
-    const item = document.createElement('div');
-    item.className = 'session-item' + (sess.id === currentSessionId ? ' active' : '');
+  sorted.forEach((sess) => {
+    const item = document.createElement("div");
+    item.className =
+      "session-item" + (sess.id === currentSessionId ? " active" : "");
 
-    const info = document.createElement('div');
-    info.className = 'session-info';
+    const info = document.createElement("div");
+    info.className = "session-info";
 
-    const title = document.createElement('div');
-    title.className = 'session-title';
+    const title = document.createElement("div");
+    title.className = "session-title";
     const messageCount = sess.messages.length;
     const pinnedCount = Object.keys(sess.pinnedTabs).length;
-    title.textContent = `${messageCount} msg${messageCount !== 1 ? 's' : ''}${pinnedCount > 0 ? `, ${pinnedCount} pinned` : ''}`;
+    title.textContent = `${messageCount} msg${messageCount !== 1 ? "s" : ""}${pinnedCount > 0 ? `, ${pinnedCount} pinned` : ""}`;
 
-    const meta = document.createElement('div');
-    meta.className = 'session-meta';
+    const meta = document.createElement("div");
+    meta.className = "session-meta";
     const date = new Date(sess.createdAt);
-    meta.textContent = `${sess.model || 'unknown'} • ${date.toLocaleDateString()}`;
+    meta.textContent = `${sess.model || "unknown"} • ${date.toLocaleDateString()}`;
 
     info.appendChild(title);
     info.appendChild(meta);
 
-    const deleteBtn = document.createElement('button');
-    deleteBtn.className = 'session-delete';
-    deleteBtn.textContent = '×';
-    deleteBtn.title = 'Delete session';
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "session-delete";
+    deleteBtn.textContent = "×";
+    deleteBtn.title = "Delete session";
     deleteBtn.onclick = (e) => {
       e.stopPropagation();
       showDeleteModal(sess.id);
@@ -420,6 +430,12 @@ function updateSessionsList() {
 
 // Start a new chat session
 async function newChat() {
+  // Destroy on-device session for fresh start
+  if (localSession) {
+    localSession.destroy();
+    localSession = null;
+  }
+
   // Create new session
   const newId = `session-${Date.now()}`;
   currentSessionId = newId;
@@ -429,7 +445,7 @@ async function newChat() {
     pinnedTabs: {},
     model: modelSelect.value,
     createdAt: Date.now(),
-    lastActiveAt: Date.now()
+    lastActiveAt: Date.now(),
   };
 
   await saveSessions();
@@ -446,26 +462,41 @@ async function newChat() {
 
 // Initialize session with selected model
 async function initSession(model) {
-  statusDot.className = 'status-dot connecting';
-  statusText.textContent = 'Initializing...';
+  statusDot.className = "status-dot connecting";
+  statusText.textContent = "Initializing...";
+
+  if (model === ON_DEVICE_MODEL) {
+    if (localSession) {
+      localSession.destroy();
+      localSession = null;
+    }
+    statusDot.className = "status-dot";
+    statusText.textContent = "Gemini Nano (on-device)";
+    session.model = ON_DEVICE_MODEL;
+    await saveSessions();
+    return;
+  }
 
   try {
-    const result = await rpcCall('InitSession', { model });
-    statusDot.className = 'status-dot';
+    const result = await rpcCall("InitSession", { model });
+    statusDot.className = "status-dot";
     statusText.textContent = result.model;
     session.model = result.model;
     await saveSessions();
   } catch (error) {
-    statusDot.className = 'status-dot disconnected';
-    statusText.textContent = 'Init failed';
-    addMessageToDOM('error', `Failed to initialize: ${error.message}`);
+    statusDot.className = "status-dot disconnected";
+    statusText.textContent = "Init failed";
+    addMessageToDOM("error", `Failed to initialize: ${error.message}`);
   }
 }
 
 // Extract page content using Readability
 async function extractPageContent(url) {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const [tab] = await chrome.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
 
     if (!tab?.id) {
       return null;
@@ -474,16 +505,18 @@ async function extractPageContent(url) {
     const results = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => {
-        if (typeof Readability === 'undefined') {
-          const article = document.querySelector('article') || document.body;
+        if (typeof Readability === "undefined") {
+          const article = document.querySelector("article") || document.body;
           const title = document.title;
           const clone = article.cloneNode(true);
-          clone.querySelectorAll('script, style, nav, header, footer, aside').forEach(el => el.remove());
+          clone
+            .querySelectorAll("script, style, nav, header, footer, aside")
+            .forEach((el) => el.remove());
 
           return {
             title: title,
             content: clone.innerText.trim(),
-            url: window.location.href
+            url: window.location.href,
           };
         }
 
@@ -491,12 +524,14 @@ async function extractPageContent(url) {
         const reader = new Readability(documentClone);
         const article = reader.parse();
 
-        return article ? {
-          title: article.title,
-          content: article.textContent,
-          url: window.location.href
-        } : null;
-      }
+        return article
+          ? {
+              title: article.title,
+              content: article.textContent,
+              url: window.location.href,
+            }
+          : null;
+      },
     });
 
     if (results?.[0]?.result) {
@@ -507,7 +542,7 @@ async function extractPageContent(url) {
         title: title,
         content: content,
         pinnedAt: Date.now(),
-        sent: false  // Will be sent with next chat message
+        sent: false, // Will be sent with next chat message
       };
 
       updatePinUI();
@@ -519,7 +554,7 @@ async function extractPageContent(url) {
 
     return null;
   } catch (error) {
-    console.error('Content extraction error:', error);
+    console.error("Content extraction error:", error);
     return null;
   }
 }
@@ -532,16 +567,16 @@ marked.setOptions({
 
 // Show loading indicator
 function showLoading() {
-  const loading = document.createElement('div');
-  loading.className = 'message assistant loading';
-  loading.id = 'loadingIndicator';
-  loading.innerHTML = '<span></span><span></span><span></span>';
+  const loading = document.createElement("div");
+  loading.className = "message assistant loading";
+  loading.id = "loadingIndicator";
+  loading.innerHTML = "<span></span><span></span><span></span>";
   chatContainer.appendChild(loading);
   chatContainer.scrollTop = chatContainer.scrollHeight;
 }
 
 function hideLoading() {
-  const loading = document.getElementById('loadingIndicator');
+  const loading = document.getElementById("loadingIndicator");
   if (loading) loading.remove();
 }
 
@@ -552,10 +587,83 @@ function setStatus(state, text) {
 
 async function getCurrentTabUrl() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const [tab] = await chrome.tabs.query({
+      active: true,
+      currentWindow: true,
+    });
     return tab?.url || null;
   } catch {
     return null;
+  }
+}
+
+// Detect on-device Gemini Nano and add to model dropdown if supported
+async function checkOnDeviceAvailability() {
+  if (!("LanguageModel" in self)) return;
+  try {
+    await LanguageModel.params();
+    onDeviceAvailable = true;
+    const opt = document.createElement("option");
+    opt.value = ON_DEVICE_MODEL;
+    opt.textContent = "gemini-nano (on-device)";
+    modelSelect.appendChild(opt);
+  } catch {
+    onDeviceAvailable = false;
+  }
+}
+
+function isOnDevice() {
+  return modelSelect.value === ON_DEVICE_MODEL;
+}
+
+// Send message using on-device Gemini Nano via Chrome Prompt API
+async function sendOnDevice(message, context) {
+  if (!localSession) {
+    const params = {};
+    if (context) {
+      params.initialPrompts = [
+        {
+          role: "system",
+          content: `You are a helpful assistant. Answer questions using the provided page content.\n\n${context}`,
+        },
+      ];
+    }
+    localSession = await LanguageModel.create(params);
+  } else if (context) {
+    // New context arrived mid-conversation; prepend to this message
+    message = `[New page content]\n${context}\n\n${message}`;
+  }
+  return localSession.prompt(message);
+}
+
+// Summarize multiple pages via Summarizer API for on-device context (keeps things inside Nano's context window)
+async function summarizePages(pages) {
+  try {
+    const summarizer = await Summarizer.create({
+      type: "key-points",
+      format: "markdown",
+      length: "medium",
+    });
+
+    const summaries = await Promise.all(
+      pages.map(async ({ title, url, content }) => {
+        const summary = await summarizer.summarize(content);
+        return `## ${title}\nURL: ${url}\n\n${summary}`;
+      }),
+    );
+
+    summarizer.destroy();
+    return (
+      "Here are the summarized pinned pages:\n\n" +
+      summaries.join("\n\n---\n\n")
+    );
+  } catch (e) {
+    console.warn("[Lloro] Summarizer failed, sending full content:", e);
+    return pages
+      .map(
+        ({ title, url, content }) => `## ${title}\nURL: ${url}\n\n${content}`,
+      )
+      .join("\n\n---\n\n");
   }
 }
 
@@ -566,41 +674,76 @@ async function sendMessage() {
 
   isProcessing = true;
   sendBtn.disabled = true;
-  messageInput.value = '';
+  messageInput.value = "";
 
-  addMessage('user', message);
+  addMessage("user", message);
   showLoading();
 
   try {
-    let context = '';
+    let context = "";
 
     // Collect context from all pinned tabs that haven't been sent yet
     const unsent = [];
     for (const [url, tabInfo] of Object.entries(session.pinnedTabs)) {
       if (!tabInfo.sent && tabInfo.content) {
-        unsent.push(`## ${tabInfo.title}\nURL: ${url}\n\n${tabInfo.content}`);
-        tabInfo.sent = true;  // Mark as sent
+        unsent.push({ url, title: tabInfo.title, content: tabInfo.content });
+        tabInfo.sent = true; // Mark as sent
       }
     }
 
     if (unsent.length > 0) {
-      context = unsent.join('\n\n---\n\n');
-      console.log('[Lloro] Sending context for', unsent.length, 'pinned pages');
-      await saveSessions();  // Save sent status
+      if (isOnDevice() && unsent.length > 1) {
+        setStatus("working", "Summarizing pages...");
+        context = await summarizePages(unsent);
+      } else {
+        context = unsent
+          .map(
+            ({ url, title, content }) =>
+              `## ${title}\nURL: ${url}\n\n${content}`,
+          )
+          .join("\n\n---\n\n");
+      }
+      console.log("[Lloro] Sending context for", unsent.length, "pinned pages");
+      await saveSessions(); // Save sent status
     }
 
-    setStatus('working', 'Waiting for Gemini...');
-    const result = await rpcCall('Chat', { message, context });
-    console.log('[Lloro] Response received');
+    let responseText;
+    if (isOnDevice()) {
+      setStatus("working", "Thinking locally...");
+      responseText = await sendOnDevice(message, context);
+    } else {
+      setStatus("working", "Waiting for Gemini...");
+      try {
+        const result = await rpcCall("Chat", { message, context });
+        responseText = result.response || "No response received";
+      } catch (rpcError) {
+        if (onDeviceAvailable) {
+          console.warn(
+            "[Lloro] Backend failed, falling back to on-device:",
+            rpcError.message,
+          );
+          addMessageToDOM(
+            "system",
+            "Backend unavailable — falling back to on-device model.",
+          );
+          modelSelect.value = ON_DEVICE_MODEL;
+          setStatus("working", "Thinking locally...");
+          responseText = await sendOnDevice(message, context);
+        } else {
+          throw rpcError;
+        }
+      }
+    }
 
+    console.log("[Lloro] Response received");
     hideLoading();
-    checkHealth();
-    addMessage('assistant', result.response || 'No response received');
+    isOnDevice() ? setStatus("", "Gemini Nano (on-device)") : checkHealth();
+    addMessage("assistant", responseText);
   } catch (error) {
-    console.error('[Lloro] Error:', error);
+    console.error("[Lloro] Error:", error);
     hideLoading();
-    setStatus('disconnected', 'Error');
-    addMessageToDOM('error', `Error: ${error.message}`);
+    setStatus("disconnected", "Error");
+    addMessageToDOM("error", `Error: ${error.message}`);
   } finally {
     isProcessing = false;
     sendBtn.disabled = false;
@@ -609,40 +752,40 @@ async function sendMessage() {
 }
 
 // Event listeners
-messageInput.addEventListener('input', () => {
-  messageInput.style.height = 'auto';
-  messageInput.style.height = Math.min(messageInput.scrollHeight, 200) + 'px';
+messageInput.addEventListener("input", () => {
+  messageInput.style.height = "auto";
+  messageInput.style.height = Math.min(messageInput.scrollHeight, 200) + "px";
 });
 
-messageInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
+messageInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     sendMessage();
   }
 });
 
-sendBtn.addEventListener('click', sendMessage);
-newChatBtn.addEventListener('click', newChat);
+sendBtn.addEventListener("click", sendMessage);
+newChatBtn.addEventListener("click", newChat);
 
-sessionsToggleBtn.addEventListener('click', () => {
-  const isVisible = sessionsPanel.style.display !== 'none';
-  sessionsPanel.style.display = isVisible ? 'none' : 'block';
-  sessionsToggleBtn.classList.toggle('active', !isVisible);
+sessionsToggleBtn.addEventListener("click", () => {
+  const isVisible = sessionsPanel.style.display !== "none";
+  sessionsPanel.style.display = isVisible ? "none" : "block";
+  sessionsToggleBtn.classList.toggle("active", !isVisible);
   if (!isVisible) {
     updateSessionsList();
   }
 });
 
-modelSelect.addEventListener('change', () => {
+modelSelect.addEventListener("change", () => {
   newChat();
 });
 
 // Modal event listeners
-deleteCancelBtn.addEventListener('click', () => {
+deleteCancelBtn.addEventListener("click", () => {
   hideDeleteModal();
 });
 
-deleteConfirmBtn.addEventListener('click', async () => {
+deleteConfirmBtn.addEventListener("click", async () => {
   if (sessionToDelete) {
     await deleteSession(sessionToDelete);
     hideDeleteModal();
@@ -650,45 +793,48 @@ deleteConfirmBtn.addEventListener('click', async () => {
 });
 
 // Close modal on overlay click
-deleteModal.addEventListener('click', (e) => {
+deleteModal.addEventListener("click", (e) => {
   if (e.target === deleteModal) {
     hideDeleteModal();
   }
 });
 
 // Close modal on Escape key
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && deleteModal.style.display === 'flex') {
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && deleteModal.style.display === "flex") {
     hideDeleteModal();
   }
 });
 
-pinBtn.addEventListener('click', async () => {
+pinBtn.addEventListener("click", async () => {
   // Can't unpin if already pinned (button should be disabled anyway)
   if (isCurrentTabPinned()) {
     return;
   }
 
   // Pin the current tab by extracting its content
-  setStatus('working', 'Extracting page...');
+  setStatus("working", "Extracting page...");
   const context = await extractPageContent();
 
   if (context) {
-    console.log('[Lloro] Page pinned, context extracted');
+    console.log("[Lloro] Page pinned, context extracted");
     // Context will be sent with next chat message
   } else {
-    console.log('[Lloro] Failed to extract page content');
-    addMessageToDOM('error', 'Failed to extract page content');
+    console.log("[Lloro] Failed to extract page content");
+    addMessageToDOM("error", "Failed to extract page content");
   }
 
-  setStatus('', '');
+  setStatus("", "");
   checkHealth();
 });
 
 // Initialize on load
-document.addEventListener('DOMContentLoaded', async () => {
+document.addEventListener("DOMContentLoaded", async () => {
   // Update current tab URL
   await updateCurrentTabUrl();
+
+  // Detect on-device Gemini Nano and add to model dropdown if supported
+  await checkOnDeviceAvailability();
 
   // Try to migrate old storage format first
   await migrateOldStorage();
@@ -704,10 +850,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateContextInfo();
   updateSessionsList();
 
-  // Check backend
+  // Check backend (always poll so we notice it coming back online)
   const healthy = await checkHealth();
-  if (healthy) {
-    setInterval(checkHealth, 30000);
+  setInterval(checkHealth, 30000);
+  if (!healthy && onDeviceAvailable) {
+    modelSelect.value = ON_DEVICE_MODEL;
+    setStatus("", "Gemini Nano (on-device)");
   }
 
   // Listen for tab changes
@@ -725,8 +873,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   setTimeout(() => messageInput.focus(), 100);
 
   // Also focus when panel becomes visible
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
       messageInput.focus();
     }
   });

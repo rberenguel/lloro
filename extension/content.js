@@ -1,14 +1,14 @@
 // Content script for page extraction using Readability
 // This script is injected into web pages to extract readable content
 
-(function() {
+(function () {
   // Check if already injected
   if (window.__geminiExtractorLoaded) return;
   window.__geminiExtractorLoaded = true;
 
   // Listen for extraction requests
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === 'extractContent') {
+    if (request.action === "extractContent") {
       try {
         const content = extractContent();
         sendResponse({ success: true, content });
@@ -21,7 +21,7 @@
 
   function extractContent() {
     // Try to use Readability if available
-    if (typeof Readability !== 'undefined') {
+    if (typeof Readability !== "undefined") {
       const documentClone = document.cloneNode(true);
       const reader = new Readability(documentClone);
       const article = reader.parse();
@@ -32,7 +32,7 @@
           content: article.textContent,
           excerpt: article.excerpt,
           byline: article.byline,
-          siteName: article.siteName
+          siteName: article.siteName,
         };
       }
     }
@@ -46,14 +46,14 @@
 
     // Try common article containers
     const selectors = [
-      'article',
+      "article",
       '[role="main"]',
-      'main',
-      '.post-content',
-      '.article-content',
-      '.entry-content',
-      '#content',
-      '.content'
+      "main",
+      ".post-content",
+      ".article-content",
+      ".entry-content",
+      "#content",
+      ".content",
     ];
 
     let contentElement = null;
@@ -71,14 +71,25 @@
 
     // Remove unwanted elements
     const removeSelectors = [
-      'script', 'style', 'noscript', 'iframe',
-      'nav', 'header', 'footer', 'aside',
-      '.sidebar', '.navigation', '.menu', '.ads',
-      '.social-share', '.comments', '.related-posts'
+      "script",
+      "style",
+      "noscript",
+      "iframe",
+      "nav",
+      "header",
+      "footer",
+      "aside",
+      ".sidebar",
+      ".navigation",
+      ".menu",
+      ".ads",
+      ".social-share",
+      ".comments",
+      ".related-posts",
     ];
 
-    removeSelectors.forEach(selector => {
-      clone.querySelectorAll(selector).forEach(el => el.remove());
+    removeSelectors.forEach((selector) => {
+      clone.querySelectorAll(selector).forEach((el) => el.remove());
     });
 
     // Get text content
@@ -86,17 +97,17 @@
 
     // Clean up whitespace
     text = text
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line.length > 0)
-      .join('\n\n');
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0)
+      .join("\n\n");
 
     return {
       title,
       content: text,
       excerpt: text.substring(0, 500),
       byline: null,
-      siteName: window.location.hostname
+      siteName: window.location.hostname,
     };
   }
 })();

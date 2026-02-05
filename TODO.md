@@ -5,6 +5,7 @@
 ### Pin Management Improvements
 
 - [x] **Default to unpinned state**
+
   - Change default behavior: pages should NOT be sent by default
   - Current: `includePageContent = true` → Change to: `includePageContent = false`
   - Page content can be huge, so opt-in is better than opt-out
@@ -12,6 +13,7 @@
   - ✅ COMPLETED: Changed line 17 and line 51 in main.js
 
 - [x] **Tab switching updates pin context**
+
   - When user switches tabs, update which page can be pinned
   - Show previously pinned tabs in the current session
   - Track which tabs have been pinned per session
@@ -28,6 +30,7 @@
 ### Session Management
 
 - [x] **Session history navigation**
+
   - Implement ability to go back to previous sessions
   - Each session needs to track:
     - Messages history
@@ -52,12 +55,14 @@
 ## Implementation Notes
 
 ### Current State Analysis
+
 - Session state is currently stored in `chrome.storage.local`
 - Model switching triggers new session (`InitSession` RPC call)
 - No session history/navigation exists
 - Pin state is global, not per-session
 
 ### Required Changes
+
 1. **Data Model:** Need to track multiple sessions with IDs
 2. **Storage Schema:** Update to support session array/map
 3. **UI Components:** Session picker/switcher interface
@@ -77,4 +82,4 @@
 
 ---
 
-*Last updated: 2026-01-24*
+_Last updated: 2026-01-24_

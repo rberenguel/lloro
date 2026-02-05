@@ -34,11 +34,13 @@ did not want to deal with. Feel free to fork and add that if you feel like it, n
 ### Gemini CLI Setup
 
 1. Install the latest version of Gemini CLI:
+
    ```bash
    npm install -g @google/gemini-cli
    ```
 
 2. Authenticate:
+
    ```bash
    gemini
    ```
@@ -91,6 +93,7 @@ go run main.go
 ```
 
 The server starts on `http://localhost:6363`. Endpoints:
+
 - `POST /rpc` - JSON-RPC endpoint
 - `GET /health` - Health check
 
@@ -168,6 +171,21 @@ The server starts on `http://localhost:6363`. Endpoints:
   - Different URLs = different pin states
   - Pin states persist within a session
 
+### On-device Fallback
+
+If Chrome has downloaded the Gemini Nano model, a `gemini-nano (on-device)` option appears in the model dropdown. You can select it explicitly, or it activates automatically in two cases:
+
+- **Backend offline at startup** — if the health check fails and Nano is available, the dropdown switches to it silently.
+- **RPC call fails mid-conversation** — quota errors, network drops, etc. A note appears in the chat and the session continues locally.
+
+A few things to keep in mind:
+
+- **No backend required** when using on-device. Inference runs entirely in the browser via Chrome's [Prompt API](https://developer.chrome.com/docs/ai).
+- **Ephemeral context**: the model's conversation memory lives only as long as the side panel stays open. Close and reopen it and your messages still render from storage, but the model doesn't remember them.
+- Pinned-page context works the same as with remote models: baked into the session on first use, new pins mid-conversation get prepended to your message. When multiple pages are pinned, their content is automatically summarized (via Chrome's [Summarizer API](https://developer.chrome.com/docs/ai/summarizer-api)) before being sent to Nano — keeps things inside its context window. Single-page context is sent as-is.
+
+See [Gemini Nano won't download](#gemini-nano-wont-download--not-enough-space) in Troubleshooting if you can't get the model to install.
+
 ## JSON-RPC API
 
 ### InitSession
@@ -212,12 +230,14 @@ Sends a message with optional page context to the agent.
 - `gemini-2.5-flash`
 - `gemini-2.5-pro`
 - `gemini-2.5-flash-lite`
+- `gemini-nano (on-device)` — appears automatically if Chrome has the Nano model downloaded; see [On-device Fallback](#on-device-fallback) below
 
 ## Troubleshooting
 
 ### Backend shows "ACP initialize failed, falling back to non-interactive mode"
 
 This usually means the Gemini CLI version doesn't support ACP or there's an authentication issue:
+
 1. Update Gemini CLI: `npm update -g @google/gemini-cli`
 2. Re-authenticate: `gemini`
 3. Check that `gemini --experimental-acp` works in your terminal
@@ -225,6 +245,7 @@ This usually means the Gemini CLI version doesn't support ACP or there's an auth
 ### Backend shows "failed to start gemini-cli"
 
 Ensure `gemini` CLI is installed and in your PATH:
+
 ```bash
 which gemini
 gemini --version
@@ -239,6 +260,7 @@ gemini --version
 ### Model not found error
 
 If you see "ModelNotFoundError", the selected model may not be enabled:
+
 1. Run `gemini settings` and check available models
 2. Enable preview models if using Gemini 3
 
@@ -252,9 +274,27 @@ Some pages block content scripts. The extension falls back to basic text extract
 2. Look for errors in the browser console (F12)
 3. Try refreshing the page and the extension
 
+### Gemini Nano won't download / "not enough space"
+
+The model isn't downloaded until you first try to use it — at that point Chrome needs ~25 GB free on the volume containing your Chrome profile (not total disk space). If there isn't enough room the download fails, and Chrome won't retry in the same session:
+
+1. Free up ~25 GB on your Chrome profile volume (on macOS, usually your main volume).
+2. **Quit Chrome completely and reopen it** — a reload won't retry the download.
+3. Select `gemini-nano (on-device)` and send a message. The download kicks off at that point and takes a few minutes (~2 GB).
+
+To check where things stand, open `chrome://on-device-internals` and look at the **Model Status** and **Event Logs** tabs. You can also check from DevTools on the side panel page:
+
+```js
+await LanguageModel.availability();
+// → "available" | "downloading" | "downloadable" | "unavailable"
+```
+
+`"downloadable"` means the hardware supports it but the model hasn't been fetched yet. `"unavailable"` is a harder block — GPU memory or other hardware constraints — the event logs will say which.
+
 ### Sessions not loading
 
 The extension automatically migrates from the old single-session storage format (v0.0.1) to the new multi-session format (v0.1.0+). If you experience issues:
+
 1. Check browser console for migration errors
 2. Your old session should appear in the sessions list
 3. If migration fails, old data is preserved at `chrome.storage.local.lloro_session`
@@ -271,5 +311,6 @@ go run main.go
 ### Extension
 
 After making changes to extension files:
+
 1. Go to `chrome://extensions`
 2. Click the refresh icon on the extension card
